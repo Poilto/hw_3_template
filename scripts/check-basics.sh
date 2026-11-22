@@ -8,8 +8,11 @@ temp_dir=''
 compose_active=0
 export HOST_PORT=0
 
-dc() {
-    docker compose --ansi never --project-name "$project" -f compose.sqlite.yaml "$@"
+run_dc() {
+    printf '$ HOST_PORT=%q GREETING=%q' "$HOST_PORT" "$GREETING"
+    printf ' %q' "${compose[@]}" "$@"
+    printf '\n'
+    "${compose[@]}" "$@"
 }
 
 cleanup() {
@@ -20,14 +23,14 @@ cleanup() {
             docker logs "$direct" >&2 || true
         fi
         if (( compose_active )); then
-            dc logs --tail=20 >&2 || true
+            "${compose[@]}" logs --tail=20 >&2 || true
         fi
     fi
     if [[ -n $direct ]]; then
         docker rm -f "$direct" >/dev/null || true
     fi
     if (( compose_active )); then
-        dc down -v --remove-orphans || true
+        run_dc down -v --remove-orphans || true
     fi
     if [[ -n $temp_dir ]]; then
         rmdir -- "$temp_dir" || true
@@ -57,6 +60,7 @@ if data["count"] != int(sys.argv[1]) or data["greeting"] != sys.argv[2] or data[
 docker info --format '{{.ServerVersion}}' >/dev/null
 temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/hw3basics-$$-XXXXXXXX")
 project=$(printf '%s' "${temp_dir##*/}" | tr '[:upper:]' '[:lower:]')
+compose=(docker compose --ansi never --project-name "$project" -f compose.sqlite.yaml)
 tag="hw3-basics:$project"
 
 stage='4 балла — Docker без Compose'
@@ -88,27 +92,25 @@ stage='6 баллов — Compose и именованный volume SQLite'
 printf '\n== %s ==\n' "$stage"
 export GREETING='Hello from Compose'
 compose_active=1
-printf '$ HOST_PORT=0 GREETING="%s" docker compose -f compose.sqlite.yaml up -d --build --wait\n' "$GREETING"
-dc up -d --build --wait --wait-timeout 60
-container=$(dc ps -q app)
-address=$(dc port app 8000)
+run_dc up -d --build --wait --wait-timeout 60
+container=$("${compose[@]}" ps -q app)
+address=$("${compose[@]}" port app 8000)
 expect_count GET / 0
 expect_count POST /increment 1
 volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$container")
 [[ -n $volume ]]
 printf 'Контейнер %s и volume %s\n' "$container" "$volume"
 
-printf '$ docker compose -f compose.sqlite.yaml down\n$ docker compose -f compose.sqlite.yaml up -d --wait\n'
 old_container=$container
-dc down
-dc up -d --wait --wait-timeout 60
-container=$(dc ps -q app)
-address=$(dc port app 8000)
+run_dc down
+run_dc up -d --wait --wait-timeout 60
+container=$("${compose[@]}" ps -q app)
+address=$("${compose[@]}" port app 8000)
 [[ -n $container && $container != "$old_container" ]]
 new_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$container")
 [[ $new_volume == "$volume" ]]
 expect_count GET / 1
 printf 'Новый контейнер %s использует прежний volume %s\n' "$container" "$volume"
-dc down -v --remove-orphans
+run_dc down -v --remove-orphans
 compose_active=0
 printf '\nOK. Проверки Docker и Compose с SQLite прошли\n'
